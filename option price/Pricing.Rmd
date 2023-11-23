@@ -84,7 +84,10 @@ NotePayoff<-function(Spath, Denom=1000,K= K_strike){
 }
 ```
 
-## (b)
+## (b) The estimated model for the underlying asset(s) with the estimated parameters
+
+i.  in the real world;
+ii. in the risk-neutral world.
 
 ## i. we first estimate the real world model, with
 
@@ -116,7 +119,7 @@ SimHSCE<-SimGBMsde(Nsim,S0,r,sigma,dt,T_remain)
 Visualize(SimHSCE)
 ```
 
-## (c) Estimate probabilities under different situation using Monte-Carlo.
+## (c) Estimate probabilities occurring probabilities of the scenarios at redemption (as per defined in the fact sheet) under different situation using Monte-Carlo, and risk neutral.
 
 Based on the description of the product, there are three scenarios:
 
@@ -147,7 +150,7 @@ P_2 = sum(scenarios == 2)/Nsim;cat("probabilities of the scenario 2 is:",P_2,"\n
 P_3 = sum(scenarios == 3)/Nsim;cat("probabilities of the scenario 3 is:",P_3,"\n")
 ```
 
-## (d) Risk-neutral Valuation
+## (d) Risk-neutral price
 
 ```{r}
 set.seed(2304343)
