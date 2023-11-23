@@ -1,0 +1,198 @@
+---
+---
+---
+
+## Preparation
+
+1.Import the data and compute the daily log return.
+
+```{r}
+HSCE<-read.csv("HSCE.csv",header=TRUE) 
+HSCEprices<-as.numeric(as.vector(HSCE$Adj.Close))
+HSCEprices<-HSCEprices[!any(is.na(HSCEprices))]
+
+n0=length(HSCEprices)
+HSCElogprices<-log(HSCEprices)
+HSCElogreturns<-HSCElogprices[2:n0]-HSCElogprices[1:(n0-1)]
+```
+
+2.Define necessary variables and functions
+
+```{r}
+#time frame:
+#According to my research,
+#there are 245 trading days from the end of 26 April 2020 to end of 26 April 2021.
+
+# set 26 April 2020 as present day
+
+S0=HSCEprices[n0] #current price
+K_strike = 11638.18 # initial level, or strike price
+dt=1/252 # frequency: one day
+
+T_remain = 245*dt # time to maturity 
+
+
+#define the visualization
+Visualize<-function(S){
+  # endindex=ncol(S)
+  minS=min(S);maxS=max(S) # the y-limits of the plot
+  noS<-nrow(S)
+  cl<-rainbow(noS) # vector of rainbow colors
+  plot(S[1,],type="l",ylim=c(minS,maxS),col=cl[1])
+  if(noS>1){
+    for(i in 2:noS){
+      lines(S[i,],col=cl[i])
+    }
+  }
+}
+# try visualize the history data
+Histdata<-matrix(rep(HSCEprices,1),ncol=n0,byrow=T);
+Visualize(Histdata)
+
+# define the simulation function 
+SimGBMsde<-function(Nsim,S0,mu,sigma,Deltat,T_remain){
+  m=T_remain/Deltat # number of periods
+  S=matrix(S0,nrow=Nsim,ncol=m+1)
+  for(i in 1:Nsim){
+    Z<-rnorm(m)
+    for(j in 2:(m+1)){
+       # S[i,j]=S[i,j-1]+S[i,j-1]*(mu*Deltat+sigma*sqrt(Deltat)*Z[j-1])
+       S[i,j]=S[i,j-1]*exp(v*Deltat+sigma*sqrt(Deltat)*Z[j-1])
+    }
+  }
+  S
+}
+```
+
+## (a)Payoff function
+
+The payoff function is:
+
+$V(S_t,t) = e^{-r(T-t)}\cdot E[V(S_T,T)]$
+
+$$ = e^{-r(T-t)} \cdot 1.05D \cdot P(S_{max}(T) \geq 1.3K) \ +\ e^{-r(T-t)} \cdot D \cdot E[max(\frac{S_T}{K},1)\cdot \boldsymbol{1} \{S_{max}(T) < 1.3K\}]\ $$
+
+where D is the denomination, D = 1000 USD. K is the initial level
+
+```{r}
+NotePayoff<-function(Spath, Denom=1000,K= K_strike){
+  T = length(Spath) #the final date of simulation
+  ST <- Spath[T]
+  S_max_T <- max(Spath)
+  payoff <- ifelse(S_max_T >= 1.3*K, 1.05 * Denom, Denom* max(ST/K ,1))
+  payoff
+}
+```
+
+## (b)
+
+## i. we first estimate the real world model, with
+
+$$X_{j+1} = X_j+ X_j*(v- \frac{\sigma^2}{2}) *\Delta t + X_j*\sigma \sqrt{\Delta t} Z_j$$ Where $$v = \frac{\overline{log\_returns}}{\Delta t}$$ and $$\sigma = \frac{sd(log\_returns)}{\Delta t}$$
+
+```{r}
+set.seed(2304343)
+v=mean(HSCElogreturns)/dt
+sigma=sd(HSCElogreturns)/sqrt(dt)
+mu = v+ sigma^2/2
+#Here we use 1000 simulation as a demo just for visualization
+Nsim=1000
+SimHSCE<-SimGBMsde(Nsim,S0,mu,sigma,dt,T_remain);
+Visualize(SimHSCE)
+```
+
+## ii. Estimate in risk neutral world, with
+
+$$X_{j+1} = X_j+ r *\Delta t + \sigma \sqrt{\Delta t} Z_j$$ Where $$r = 0.17\% $$ and $$\sigma = \frac{sd(log\_returns)}{\Delta t}$$
+
+```{r}
+set.seed(2304343)
+r=0.0017
+S0=HSCEprices[n0]
+#Here we use 1000 simulation as a demo just for visualization
+Nsim=1000
+# sigma is the same as previous one
+SimHSCE<-SimGBMsde(Nsim,S0,r,sigma,dt,T_remain)
+Visualize(SimHSCE)
+```
+
+## (c) Estimate probabilities under different situation using Monte-Carlo.
+
+Based on the description of the product, there are three scenarios:
+
+scenario 1: $$S_{max}(T) \geq 1.3S_0 $$ scenario 2:$$S_{max}(T) < 1.3S_0\ and\  S_T/S_0 > 1 $$ scenario 3:$$S_{max}(T) < 1.3S_0\ and\  S_T/S_0 \leq 1 $$
+
+Using Monte-Carlo method $$P(scenario\ i) = \frac{\#\ of\ scenario\ i}{\#\ of\ simulation}$$
+
+```{r}
+set.seed(2304343)
+Nsim = 70000
+SimHSCE<-SimGBMsde(Nsim,S0,r,sigma,dt,T_remain);
+
+S_max_T <- apply(SimHSCE, 1, max)
+S_T <- SimHSCE[, ncol(SimHSCE)]
+scenarios <- vector("integer", length = length(S_max_T))
+for (i in 1:length(S_max_T)) {
+    if (S_max_T[i] >= 1.3 * K_strike) {
+       scenarios[i] <- 1
+  } else if (S_max_T[i] < 1.3 * K_strike && S_T[i] / K_strike > 1) {
+       scenarios[i] <- 2
+  } else {
+       scenarios[i] <- 3
+  }
+}
+
+P_1 = sum(scenarios == 1)/Nsim;cat("probabilities of the scenario 1 is:",P_1,"\n")
+P_2 = sum(scenarios == 2)/Nsim;cat("probabilities of the scenario 2 is:",P_2,"\n")
+P_3 = sum(scenarios == 3)/Nsim;cat("probabilities of the scenario 3 is:",P_3,"\n")
+```
+
+## (d) Risk-neutral Valuation
+
+```{r}
+set.seed(2304343)
+Nsim=70000;
+SimHSCE <- SimGBMsde(Nsim,S0,r,sigma,dt,T_remain)
+SimNotes<- exp(-r*T_remain)*apply(SimHSCE,1,NotePayoff)
+NoteValue=mean(SimNotes); NoteValueVar=var(SimNotes)/Nsim
+cat("Noteprice is",NoteValue,"\n")
+cat("95% confidence interval of price is",NoteValue-1.96*sqrt(NoteValueVar),NoteValue+1.96*sqrt(NoteValueVar))
+```
+
+## (e&f) Simulating Delta and Gamma
+
+```{r}
+set.seed(2304343)
+SimGBM_greek<-function(Nsim,S0,mu,sigma,Deltat,T_remain,h){
+  m=T/Deltat # number of periods
+  Splush=matrix(S0+h,nrow=Nsim,ncol=m+1)
+  S=matrix(S0,nrow=Nsim,ncol=m+1)
+  Sminush=matrix(S0-h,nrow=Nsim,ncol=m+1)
+  v= mu- (sigma^2)/2
+  for(i in 1:Nsim){
+    Z<-rnorm(m)
+    for(j in 2:(m+1)){
+      Splush[i,j]=Splush[i,j-1]*exp(v*Deltat+sigma*sqrt(Deltat)*Z[j-1])
+      S[i,j]=S[i,j-1]*exp(v*Deltat+sigma*sqrt(Deltat)*Z[j-1])
+      Sminush[i,j]=Sminush[i,j-1]*exp(v*Deltat+sigma*sqrt(Deltat)*Z[j-1])
+    }
+  }
+  list(Splush=Splush,S=S,Sminush=Sminush)
+}
+
+h=S0*0.001
+Nsim=10000
+SimHSI<-SimGBM_greek(Nsim,S0,mu,sigma,dt,T_remain,h)
+SimHSISplush<-SimHSI$Splush
+SimHSIS<-SimHSI$S
+SimHSISminush<-SimHSI$Sminush
+SimNotesplush<-apply(SimHSISplush,1,NotePayoff)
+SimNotes<-apply(SimHSIS,1,NotePayoff)
+SimNotesminush<-apply(SimHSISminush,1,NotePayoff)
+NoteValueplush=exp(-r*T_remain)*mean(SimNotesplush)
+NoteValue=exp(-r*T_remain)*mean(SimNotes)
+NoteValueminush=exp(-r*T_remain)*mean(SimNotesminush)
+
+NoteDelta=(NoteValueplush-NoteValueminush)/(2*h); NoteDelta
+NoteGamma=(NoteValueplush-2*NoteValue+NoteValueminush)/(h^2); NoteGamma
+```
